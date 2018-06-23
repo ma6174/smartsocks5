@@ -59,7 +59,6 @@ func (r *RuleSet) Allow(ctx context.Context, req *socks5.Request) (context.Conte
 		ctx = context.WithValue(ctx, "domain", req.DestAddr.FQDN)
 	}
 	return ctx, true
-	proxyDialer.Dial()
 }
 
 // =====================================================================================
