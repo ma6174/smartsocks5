@@ -26,14 +26,26 @@ function FindProxyForURL(url, host) {
 `
 
 var (
-	dest           = flag.String("dest", "127.0.0.1:7070", "dest socks5 proxy addr")
-	socks5listen   = flag.String("socks5_listen", "127.0.0.1:7071", "listen addr")
-	pacListenAddr  = flag.String("pac_listen", "127.0.0.1:7072", "pac listen addr")
-	pacToAddr      = flag.String("pac_to", "127.0.0.1:7071", "pac proxy to addr")
-	blockTime      = flag.Int("block_time", 600, "fail block time (seconds)")
-	retryTime      = flag.Int("retry_time", 300, "retry proxy time (milliseconds)")
-	skipLocalAddr  = flag.Bool("skip_local_addr", true, "skip local addr")
-	dialer         = &net.Dialer{Timeout: time.Second * 5, KeepAlive: time.Minute}
+	dest          = flag.String("dest", "127.0.0.1:7070", "dest socks5 proxy addr")
+	socks5listen  = flag.String("socks5_listen", "127.0.0.1:7071", "listen addr")
+	pacListenAddr = flag.String("pac_listen", "127.0.0.1:7072", "pac listen addr")
+	pacToAddr     = flag.String("pac_to", "127.0.0.1:7071", "pac proxy to addr")
+	blockTime     = flag.Int("block_time", 600, "fail block time (seconds)")
+	retryTime     = flag.Int("retry_time", 200, "retry proxy time (milliseconds)")
+	skipLocalAddr = flag.Bool("skip_local_addr", true, "skip local addr")
+	dns           = flag.String("dns", "1.1.1.1", "dns")
+	resolver      = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if *dns != "" {
+				address = *dns
+			}
+			if !strings.Contains(address, ":") {
+				address += ":53"
+			}
+			return net.Dial(network, address)
+		}}
+	dialer         = &net.Dialer{Timeout: time.Second * 3, KeepAlive: time.Minute, Resolver: resolver}
 	proxyDialer, _ = proxy.SOCKS5("tcp", *dest, nil, dialer)
 	_, iplocal, _  = net.ParseCIDR("127.0.0.0/8")
 	_, ip8, _      = net.ParseCIDR("10.0.0.0/8")
@@ -90,7 +102,7 @@ func (c *Conn) Close() error {
 // =====================================================================================
 
 func dial(ctx context.Context, network string, address string) (conn net.Conn, err error) {
-	host, _, err := net.SplitHostPort(address)
+	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		log.Println("invalid address", address)
 		return
@@ -148,6 +160,16 @@ func dial(ctx context.Context, network string, address string) (conn net.Conn, e
 	case <-time.After(time.Millisecond * time.Duration(rand.Intn(100)+*retryTime)):
 		logger.Println("try to use proxy")
 		go func() {
+			if domain != nil && net.ParseIP(domain.(string)) == nil {
+				result, _ := resolver.LookupHost(ctx, domain.(string))
+				if len(result) != 0 {
+					oldAddress := address
+					if oldAddress != result[0] {
+						address = fmt.Sprintf("%v:%v", result[0], port)
+						logger.Printf("proxy resolve %v %v -> %v", domain, oldAddress, result[0])
+					}
+				}
+			}
 			conn, err := proxyDialer.Dial(network, address)
 			ch <- ConnErr{false, conn, err}
 		}()
@@ -203,17 +225,32 @@ func init() {
 	}()
 }
 
+type Resolver struct {
+	nr *net.Resolver
+}
+
+func (r *Resolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
+	addrs, err := r.nr.LookupHost(ctx, name)
+	if err != nil {
+		return ctx, nil, err
+	}
+	ip := net.ParseIP(addrs[0])
+	return ctx, ip, err
+
+}
+
 func main() {
 	flag.Parse()
+	log.Println("use dns", *dns)
 	go runPacServer()
 	conf := &socks5.Config{}
 	conf.Rules = &RuleSet{}
 	conf.Dial = dial
+	conf.Resolver = &Resolver{resolver}
 	server, err := socks5.New(conf)
 	if err != nil {
 		log.Panic(err)
 	}
 	log.Println("socks5 server listen at", *socks5listen)
 	log.Panic(server.ListenAndServe("tcp", *socks5listen))
-
 }
