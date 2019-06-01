@@ -34,24 +34,14 @@ var (
 	retryTime     = flag.Int("retry_time", 200, "retry proxy time (milliseconds)")
 	skipLocalAddr = flag.Bool("skip_local_addr", true, "skip local addr")
 	dns           = flag.String("dns", "1.1.1.1", "dns")
-	resolver      = &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			if *dns != "" {
-				address = *dns
-			}
-			if !strings.Contains(address, ":") {
-				address += ":53"
-			}
-			return net.Dial(network, address)
-		}}
-	dialer         = &net.Dialer{Timeout: time.Second * 3, KeepAlive: time.Minute, Resolver: resolver}
-	proxyDialer, _ = proxy.SOCKS5("tcp", *dest, nil, dialer)
-	_, iplocal, _  = net.ParseCIDR("127.0.0.0/8")
-	_, ip8, _      = net.ParseCIDR("10.0.0.0/8")
-	_, ip12, _     = net.ParseCIDR("172.16.0.0/12")
-	_, ip16, _     = net.ParseCIDR("192.168.0.0/16")
-	proxyAddrs     sync.Map // map[addr]time.Time
+	_, iplocal, _ = net.ParseCIDR("127.0.0.0/8")
+	_, ip8, _     = net.ParseCIDR("10.0.0.0/8")
+	_, ip12, _    = net.ParseCIDR("172.16.0.0/12")
+	_, ip16, _    = net.ParseCIDR("192.168.0.0/16")
+	proxyAddrs    sync.Map // map[addr]time.Time
+	dialer        *net.Dialer
+	proxyDialer   proxy.Dialer
+	resolver      *net.Resolver
 )
 
 type ConnErr struct {
@@ -241,6 +231,19 @@ func (r *Resolver) Resolve(ctx context.Context, name string) (context.Context, n
 
 func main() {
 	flag.Parse()
+	resolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if *dns != "" {
+				address = *dns
+			}
+			if !strings.Contains(address, ":") {
+				address += ":53"
+			}
+			return net.Dial(network, address)
+		}}
+	dialer = &net.Dialer{Timeout: time.Second * 3, KeepAlive: time.Minute, Resolver: resolver}
+	proxyDialer, _ = proxy.SOCKS5("tcp", *dest, nil, dialer)
 	log.Println("use dns", *dns)
 	go runPacServer()
 	conf := &socks5.Config{}
