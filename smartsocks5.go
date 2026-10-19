@@ -139,6 +139,9 @@ func dial(ctx context.Context, network string, address string) (conn net.Conn, e
 		if ce.Err != nil {
 			logger.Println("use proxy because", str(ce.Direct), "failed", ce.Err)
 			conn, err = proxyDialer.Dial(network, address)
+			if err != nil {
+				logger.Println("proxyDialer failed", err)
+			}
 			return &Conn{Conn: conn, logger: logger}, err
 		}
 		// success, remove from blocked list
